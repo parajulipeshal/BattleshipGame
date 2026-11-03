@@ -1,0 +1,280 @@
+@page "/game/{GameName}/{Player}"
+@using Logic
+@using LogicGame = Logic.Game
+@using System.Runtime.InteropServices
+@rendermode InteractiveServer
+@inject NavigationManager navManager
+
+<link rel="stylesheet" href="css/Game.css" />
+<PageTitle>Game - @GameName</PageTitle>
+<h1>Game: @GameName</h1>
+
+@if (game is not null)
+{
+    if (game.State == GameState.WaitingForPlayers)
+    {
+        <p><strong>Status:</strong> Waiting for players to join...</p>
+    }
+    else if (game.State == GameState.PlacingShips)
+    {
+        <p><strong>Status:</strong> Place your ships below.</p>
+
+        @if (currentPlayer != null)
+        {
+            int size = currentPlayer.Board.BoardSize;
+
+            <div class="board">
+                @for (int y = 0; y < size; y++)
+                {
+                    <div class="row">
+                        @for (int x = 0; x < size; x++)
+                        {
+                            int localX = x;
+                            int localY = y;
+
+                            var cell = currentPlayer.Board.Cells.First(c => c.X == localX && c.Y == localY);
+
+                            <button class="cell @(cell.IsOccupied ? "occupied" : "")" @onclick="() => OnCellClicked(localX, localY)">
+                                @(cell.IsOccupied ? "🚢" : "")
+                            </button>
+                        }
+
+                    </div>
+                }
+            </div>
+        }
+    }
+    else if (game.State == GameState.InProgress)
+    {
+        @if (game.State == GameState.InProgress && currentPlayer != null)
+        {
+            <h3>Your Board</h3>
+            <div class="board">
+                @for (int y = 0; y < currentPlayer.Board.BoardSize; y++)
+                {
+                    <div class="row">
+                        @for (int x = 0; x < currentPlayer.Board.BoardSize; x++)
+                        {
+                            int lx = x;
+                            int ly = y;
+                            var cell = currentPlayer.Board.Cells.First(c => c.X == lx && c.Y == ly);
+
+                            <div class="cell @(cell.IsOccupied ? "occupied" : "") @(cell.IsHit ? "hit" : "")">
+                                @if (cell.IsHit)
+                                {
+                                    if (cell.IsOccupied)
+                                    {
+                                        <p>🔥</p>
+                                    }
+                                    else
+                                    {
+                                        <div style="background-color:red">•</div>
+                                    }
+                                }
+                                else if (cell.IsOccupied)
+                                {
+                                    <span>🚢</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <h3>Enemy Board</h3>
+
+            var enemy = game.GetOpponent(currentPlayer);
+            @if (enemy != null)
+            {
+                <div class="board">
+                    @for (int y = 0; y < enemy.Board.BoardSize; y++)
+                    {
+                        <div class="row">
+                            @for (int x = 0; x < enemy.Board.BoardSize; x++)
+                            {
+                                int lx = x;
+                                int ly = y;
+                                var cell = enemy.Board.Cells.First(c => c.X == lx && c.Y == ly);
+
+                                <button class="cell" disabled="@(!game.IsPlayersTurn(currentPlayer) || cell.IsHit)"
+                                    @onclick="() => Fire(lx, ly)">
+                                    @if (cell.IsHit)
+                                    {
+                                        if (cell.IsOccupied)
+                                        {
+                                            <p>🔥</p>
+                                        }
+                                        else
+                                        {
+                                            <p>😂</p>
+                                        }
+                                    }
+                            
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+
+    }
+    else if (game.State == GameState.GameOver)
+    {
+        <p><strong>Status:</strong> Game over!</p>
+
+        @if (currentPlayer != null)
+        {
+            var opponent = game.GetOpponent(currentPlayer);
+
+            <div>
+                <h2>
+                    @if (opponent == null)
+                    {
+                        <span>Game finished.</span>
+                    }
+                    else if (currentPlayer.Score > opponent.Score)
+                    {
+                        <span>You win! 🎉</span>
+                    }
+                    else if (currentPlayer.Score < opponent.Score)
+                    {
+                        <span>You lose.</span>
+                    }
+                    else
+                    {
+                        <span>It's a tie!</span>
+                    }
+                </h2>
+
+                <p><strong>Your score:</strong> @currentPlayer.Score</p>
+                @if (opponent != null)
+                {
+                    <p><strong>Opponent's score:</strong> @opponent.Score</p>
+                }
+            </div>
+        }
+    }
+}
+
+@if (!string.IsNullOrEmpty(Player))
+{
+    <p>You are: <strong>@Player</strong></p>
+}
+
+@if (game?.State == GameState.InProgress && currentPlayer != null)
+{
+    <div style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;">
+        <p><strong>Your Score:</strong> @currentPlayer.Score (Ships sunk: @CountShipsSunk(currentPlayer.Board))</p>
+        @if (game.GetOpponent(currentPlayer) is var opponent && opponent != null)
+        {
+            <p><strong>Opponent Score:</strong> @opponent.Score (Ships sunk: @CountShipsSunk(opponent.Board))</p>
+        }
+    </div>
+}
+
+<button class="btn btn-primary" @onclick="BackToLobby">Return to Lobby</button>
+
+@code {
+    [Parameter] public required string GameName { get; set; }
+    [Parameter] public required string Player { get; set; }
+
+    private LogicGame? game;
+    private Player? currentPlayer;
+    private System.Threading.Timer? stateCheckTimer;
+
+    private async Task OnCellClicked(int x, int y)
+    {
+        Console.WriteLine($"Clicked {x},{y}");//debugging purpose only
+        if (game == null || currentPlayer == null)
+            return;
+
+        if (currentPlayer.ShipIndex >= currentPlayer.ShipsToPlace.Count)
+            return;
+
+        int length = currentPlayer.ShipsToPlace[currentPlayer.ShipIndex];
+        var board = currentPlayer.Board;
+        var ship = ShipFactory.CreateShip(length);
+
+        int startX = x;
+        int startY = y;
+
+        if (board.CanPlaceShip(ship, startX, startY, true))
+        {
+            board.PlaceShip(ship, startX, startY, true);
+            currentPlayer.ShipIndex++;  
+        }
+        else
+        {
+            return;
+        }
+
+        if (currentPlayer.ShipIndex >= currentPlayer.ShipsToPlace.Count)
+        {
+            var opponent = game.GetOpponent(currentPlayer);
+
+                if (opponent != null && opponent.ShipIndex >= opponent.ShipsToPlace.Count)
+            {
+                game.State = GameState.InProgress;
+                game.CurrentTurn = game.Player1;
+            }
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+    private async Task Fire(int x, int y)
+    {
+        if (game == null || currentPlayer == null)
+            return;
+
+        if (!game.IsPlayersTurn(currentPlayer))
+            return;
+
+        var result = game.Fire(currentPlayer, x, y);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override void OnInitialized()
+    {
+        game = Lobby.GetGame(GameName);
+        if (game == null)
+        {
+            navManager.NavigateTo("/");
+            return;
+        }
+
+        currentPlayer = game.GetPlayer(Player);
+        Lobby.LobbyChanged += OnLobbyChanged;
+        
+    }
+
+    private async void CheckGameState()
+    {
+        game = Lobby.GetGame(GameName);
+        currentPlayer = game?.GetPlayer(Player);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnLobbyChanged()
+    {
+        game = Lobby.GetGame(GameName);
+        currentPlayer = game?.GetPlayer(Player);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void BackToLobby() => navManager.NavigateTo("/");
+
+    private int CountShipsSunk(Board board)
+    {
+        return board.Ships.Count(s => s.IsSunk);
+    }
+
+    public void Dispose()
+    {
+        stateCheckTimer?.Dispose();
+        Lobby.LobbyChanged -= OnLobbyChanged;
+    }
+}

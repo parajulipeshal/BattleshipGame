@@ -1,0 +1,184 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using Logic
+@inject NavigationManager navManager
+@implements IDisposable
+
+<PageTitle>Battleship Lobby</PageTitle>
+<link href="css/Home.css" rel="stylesheet"/>
+<h1>Battleship Lobby</h1>
+
+@if (Lobby.Data.CreatedGames.Any())
+{
+    <h3>Created Games</h3>    //this section shows created games (also gets/loads data from file)
+    <ul>
+        @foreach (var name in Lobby.Data.CreatedGames)
+        {
+            <li>@name</li>
+        }
+    </ul>
+}
+else
+{
+    <p>No games created yet.</p>
+}
+
+@if (Lobby.OpenGames.Any())
+{
+    <h3>Open Games</h3>
+    <ul>
+        @foreach (var name in Lobby.OpenGames)
+        {
+            var _ = GetOrCreatePlayerName(name);
+            <li style="flex-direction: column; align-items: flex-start;">
+                <span style="margin-bottom: 8px;">@name</span>
+                <div style="display: flex; gap: 5px; width: 100%;">
+                    <input @bind="player2Names[name]" @bind:event="oninput" placeholder="Enter your name" style="flex: 1; margin: 0;" />
+                    <button class="btn btn-primary" @onclick="() => JoinGame(name)">Join</button>
+                </div>
+            </li>
+        }
+    </ul>
+}
+else
+{
+    <p>No open games yet.</p>
+}
+
+<h3>Create New Game</h3>
+<div style="background: rgba(0, 0, 0, 0.3); padding: 15px; border-radius: 8px; margin: 1rem 0; max-width: 400px;">
+    <div style="margin-bottom: 10px;">
+        <input @bind="newGameName" placeholder="Enter game name" />
+    </div>
+    <div style="margin-bottom: 10px;">
+        <input @bind="player1Name" placeholder="Enter your name" />
+    </div>
+    <button class="btn btn-primary" @onclick="CreateGame">Create Game</button>   <!-- REQ#2.3.2 -->
+</div>
+
+@if (Lobby.ActiveGames.Any())
+{
+    <h3>Active Games</h3>
+    <table border>
+        <thead>
+            <tr>
+                <th>Game</th>
+                <th>Player 1</th>
+                <th>Player 2</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var g in Lobby.ActiveGames)
+            {
+                <tr>
+                    <td>@g.Name</td>
+                    <td>@g.game.Player1?.Name</td>
+                    <td>@g.game.Player2?.Name</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<h3>Leaderboard</h3>
+<table border style="margin-top: 20px; width: 100%; max-width: 400px;">
+    <thead>
+        <tr>
+            <th>Rank</th>
+            <th>Player</th>
+            <th>Score</th>
+        </tr>
+    </thead>
+    <tbody>
+        @{
+            var leaderboard = Lobby.GetLeaderboard();
+            if (leaderboard.Any())
+            {
+                int rank = 1;
+                foreach (var entry in leaderboard.Take(10))
+                {
+                    <tr>
+                        <td>@rank</td>
+                        <td>@entry.PlayerName</td>
+                        <td>@entry.Score</td>
+                    </tr>
+                    rank++;
+                }
+            }
+            else
+            {
+                <tr><td colspan="3" style="text-align: center;">No players yet.</td></tr>
+            }
+        }
+    </tbody>
+</table>
+
+@code {
+    private string? newGameName;
+    private string? player1Name;
+    private Dictionary<string, string?> player2Names = new();
+
+    private string? GetOrCreatePlayerName(string gameName)
+    {
+        if (!player2Names.ContainsKey(gameName))
+            player2Names[gameName] = null;
+        return player2Names[gameName];
+    }
+
+    private async Task CreateGame()
+    {
+        if (string.IsNullOrWhiteSpace(newGameName) || string.IsNullOrWhiteSpace(player1Name))
+        {
+            Console.WriteLine("Game name and player name are required");
+            return;
+        }
+
+        try
+        {
+            string effectivePlayerName = player1Name.Trim();
+            var game = Lobby.CreateGame(newGameName.Trim(), effectivePlayerName);
+            newGameName = null;
+            player1Name = null;
+            await InvokeAsync(() => navManager.NavigateTo($"/game/{game.Name}/{Uri.EscapeDataString(effectivePlayerName)}"));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating game: {ex.Message}");
+        }
+    }
+
+    private async Task JoinGame(string gameName)
+    {
+        string? playerName = player2Names.TryGetValue(gameName, out var name) ? name : null;
+        
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            Console.WriteLine("Player name is required");
+            return;
+        }
+
+        try
+        {
+            string? effectivePlayerName = playerName.Trim();
+            Console.WriteLine($"Joining game: {gameName} as {effectivePlayerName}");
+            var game = Lobby.JoinGame(gameName, effectivePlayerName);       //REQ#2.3.2
+            await InvokeAsync(() => navManager.NavigateTo($"/game/{gameName}/{Uri.EscapeDataString(effectivePlayerName)}"));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error joining game: {ex.Message}");
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        Lobby.LobbyChanged += OnLobbyChanged;
+    }
+
+    private void OnLobbyChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Lobby.LobbyChanged -= OnLobbyChanged;
+    }
+}

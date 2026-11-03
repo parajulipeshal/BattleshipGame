@@ -1,0 +1,1 @@
+Why is one extra click required in the board during state change phase (PlacingShip to GameInProgress)?
